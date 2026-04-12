@@ -1,0 +1,39 @@
+### Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.python-version
+
+### Virtual environments
+.venv/
+venv/
+env/
+
+### Test / coverage / tooling
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+
+### IDE / editor
+.vscode/
+.idea/
+
+### OS / misc
+.DS_Store
+Thumbs.db
+*.log
+
+### Environment / secrets
+.env
+.env.*
+
+### Project-specific
+.cursor/
+.adk/
+personal_tutor/.adk/

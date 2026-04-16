@@ -1,9 +1,9 @@
 import os
 from google.adk.agents.llm_agent import Agent
-from VideoToTutorMe.tools.segment_tool import get_segment
-from VideoToTutorMe.tools.evaluate_tool import evaluate_response
-from VideoToTutorMe.tools.remediation_tool import select_remediation_strategy
-from VideoToTutorMe.tools.session_tool import advance_session, save_session_result
+from TutorMe.tools.segment_tool import get_segment
+from TutorMe.tools.evaluate_tool import evaluate_response
+from TutorMe.tools.remediation_tool import select_remediation_strategy
+from TutorMe.tools.session_tool import setup_session, advance_session, save_session_result
 
 # Load Miss Lily's persona instruction from prompts/
 _PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
@@ -20,6 +20,7 @@ root_agent = Agent(
     ),
     instruction=MISS_LILY_INSTRUCTION,
     tools=[
+        setup_session,
         get_segment,
         evaluate_response,
         select_remediation_strategy,

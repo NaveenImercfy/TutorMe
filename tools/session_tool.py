@@ -1,8 +1,12 @@
 import os
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from google import genai
 from google.genai import types
 from google.adk.tools import ToolContext
+
+_executor = ThreadPoolExecutor(max_workers=2)
 
 
 def _derive_segment_metadata(narration_texts: list[str]) -> dict:
@@ -28,8 +32,8 @@ Format:
     try:
         client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[types.Part.from_text(prompt)],
+            model="gemini-3-flash-preview",
+            contents=[prompt],
         )
         raw = response.text.strip()
         # Strip markdown code fences if present
@@ -53,36 +57,37 @@ def setup_session(
     narration_texts: list[str],
     tool_context: ToolContext,
 ) -> dict:
-    """Initialise the session state with segment data before teaching begins.
-    Automatically derives key concepts, expected explanations, and blooms levels
-    from the narration texts using AI. Language is auto-detected from the student.
-
-    Call this tool first when the student starts a Tutor Me session.
+    """Initialise session state. Call first on PREPARE_SESSION or START_SESSION.
 
     Args:
-        video_id: The unique ID of the lesson video.
-        images: List of image URLs, one per segment.
-        narration_texts: List of narration scripts, one per segment.
-
-    Returns:
-        Confirmation dict with total_segments and ready status.
+        video_id: Unique lesson video ID.
+        images: Image URLs, one per segment.
+        narration_texts: Narration scripts, one per segment.
     """
     total_segments = len(narration_texts)
 
-    # Auto-derive metadata from narration texts
-    metadata = _derive_segment_metadata(narration_texts)
+    # Run metadata derivation + segment 0 image description in parallel
+    from TutorMe.tools.segment_tool import _describe_image
+    first_image = images[0] if images else ""
+
+    fut_meta  = _executor.submit(_derive_segment_metadata, narration_texts)
+    fut_img   = _executor.submit(_describe_image, first_image)
+    metadata  = fut_meta.result()
+    img_desc_0 = fut_img.result()
 
     tool_context.state["video_id"]               = video_id
-    tool_context.state["language"]               = "auto"   # detected from student's first reply
+    tool_context.state["user:language"]          = "auto"   # persists across sessions; detected from student's first reply
     tool_context.state["narration_texts"]        = narration_texts
     tool_context.state["key_concepts"]           = metadata["key_concepts"]
     tool_context.state["expected_explanations"]  = metadata["expected_explanations"]
     tool_context.state["blooms_levels"]          = metadata["blooms_levels"]
     tool_context.state["images"]                 = images
+    tool_context.state["img_desc_0"]             = img_desc_0   # pre-fetched, skips Vision call in get_segment
     tool_context.state["total_segments"]         = total_segments
     tool_context.state["current_segment_index"]  = 0
     tool_context.state["phase"]                  = "teach"
     tool_context.state["attempt_count"]          = 0
+    tool_context.state["segment_started_at"]     = time.time()
     tool_context.state["xp_earned"]              = 0
     tool_context.state["coins_earned"]           = 0
     tool_context.state["weak_concepts"]          = []
@@ -104,24 +109,16 @@ def advance_session(
     attempts: int,
     tool_context: ToolContext,
 ) -> dict:
-    """Mark a segment as complete, update session state, award XP and coins,
-    and determine the next action for Miss Lily.
+    """Complete a segment, award XP/coins, return next_action.
 
-    XP awards:
-    - Pass on first attempt:  50 XP
-    - Pass after remediation: 30 XP
-    - Segment not passed:     10 XP (participation)
+    XP: 50 (1st-attempt pass) | 30 (remediation pass) | 10 (participation).
 
     Args:
-        segment_index: The 0-based index of the completed segment.
-        passed: Whether the student passed this segment.
-        score: The final evaluation score (0-100) for this segment.
-        weak_concepts: Concepts the student missed on this segment.
-        attempts: Total attempts the student made on this segment.
-
-    Returns:
-        A dict with next_action ("next_segment" | "final_assessment" | "session_complete"),
-        updated XP, coins, and the next segment index if applicable.
+        segment_index: 0-based index of completed segment.
+        passed: Whether the student passed.
+        score: Evaluation score 0-100.
+        weak_concepts: Concepts the student missed.
+        attempts: Total attempts on this segment.
     """
     state          = tool_context.state
     total_segments = state.get("total_segments", 0)
@@ -144,7 +141,8 @@ def advance_session(
     existing_weak = state.get("weak_concepts", [])
     merged_weak   = list(set(existing_weak + weak_concepts))
 
-    # --- Record segment result ---
+    # --- Record segment result with time_spent ---
+    time_spent = int(time.time() - state.get("segment_started_at", time.time()))
     segment_results = state.get("segment_results", [])
     segment_results.append({
         "segment_index": segment_index,
@@ -152,6 +150,7 @@ def advance_session(
         "attempts":      attempts,
         "passed":        passed,
         "weak_concepts": weak_concepts,
+        "time_spent":    time_spent,
     })
 
     next_segment_index = segment_index + 1
@@ -172,6 +171,7 @@ def advance_session(
     tool_context.state["current_segment_index"]  = next_segment_index
     tool_context.state["attempt_count"]          = 0
     tool_context.state["phase"]                  = next_phase
+    tool_context.state["segment_started_at"]     = time.time()
 
     return {
         "next_action":           next_action,
@@ -189,18 +189,10 @@ def save_session_result(
     final_score: int,
     tool_context: ToolContext,
 ) -> dict:
-    """Save the final assessment result and compute the overall mastery score.
-    Marks the session as complete.
-
-    Overall mastery is computed as the average of all segment scores plus
-    the final assessment score, weighted equally.
+    """Save final assessment score and compute overall mastery. Marks session complete.
 
     Args:
-        final_score: The student's score (0-100) on the final assessment.
-
-    Returns:
-        A dict with overall_mastery, xp_earned, coins_earned, weak_concepts,
-        and a session summary.
+        final_score: Student's score (0-100) on the final assessment.
     """
     state           = tool_context.state
     segment_results = state.get("segment_results", [])
@@ -210,8 +202,25 @@ def save_session_result(
     all_scores     = segment_scores + [final_score]
     overall_mastery = int(sum(all_scores) / len(all_scores)) if all_scores else final_score
 
+    # --- Re-teach gate: if final_score < 60, revisit weakest segments ---
+    if final_score < 60:
+        weakest = sorted(segment_results, key=lambda r: r["score"])[:3]
+        weakest_indices = [r["segment_index"] for r in weakest]
+        tool_context.state["phase"]           = "reteach"
+        tool_context.state["reteach_indices"] = weakest_indices
+        return {
+            "session_complete":        False,
+            "needs_reteach":           True,
+            "reteach_segment_indices": weakest_indices,
+            "final_score":             final_score,
+            "message":                 "Student needs to revisit weak segments before completing.",
+        }
+
     # --- Final XP/coins for completing assessment ---
-    if final_score >= 80:
+    if final_score >= 90:
+        final_xp    = 300
+        final_coins = 75
+    elif final_score >= 80:
         final_xp    = 200
         final_coins = 50
     elif final_score >= 65:

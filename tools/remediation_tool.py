@@ -7,24 +7,12 @@ def select_remediation_strategy(
     blooms_level: str,
     tool_context: ToolContext,
 ) -> dict:
-    """Choose the best remediation strategy based on what the student missed,
-    how many attempts they have made, and the cognitive level of the segment.
-
-    Strategies:
-    - simplify:       Use simpler language and shorter sentences.
-    - analogy:        Connect the concept to something familiar in daily life.
-    - visual_emphasis: Direct attention to what is shown in the segment image.
-    - step_by_step:   Break the concept into numbered steps.
-    - question_led:   Ask guiding questions to lead the student to the answer.
-    - full_reveal:    Provide the complete answer (attempt 3 — never leave stuck).
+    """Choose the best remediation strategy based on missed concepts and attempt count.
 
     Args:
-        missed_concepts: List of concept strings the student did not cover.
-        attempt_count: How many attempts the student has made for this segment.
+        missed_concepts: Concepts the student did not cover.
+        attempt_count: Attempts made on this segment so far.
         blooms_level: Cognitive level — "remember" | "understand" | "apply".
-
-    Returns:
-        A dict with strategy name and a short instruction for Miss Lily to follow.
     """
     # Attempt 3 → always reveal the full answer
     if attempt_count >= 3:

@@ -13,43 +13,27 @@ _VISION_PROMPT = (
 
 
 def _describe_image(image_url: str) -> str:
-    """Pass image URL directly to Gemini Vision and get an educational description."""
+    """Fetch image bytes and use Gemini Vision to describe educational content."""
     try:
+        img_bytes = requests.get(image_url, timeout=10).content
         client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3-flash-preview",
             contents=[
-                types.Part.from_uri(file_uri=image_url, mime_type="image/png"),
-                types.Part.from_text(_VISION_PROMPT),
+                types.Part(inline_data=types.Blob(mime_type="image/png", data=img_bytes)),
+                _VISION_PROMPT,
             ],
         )
         return response.text
-    except Exception:
-        # Fallback: fetch bytes if direct URL not supported
-        try:
-            img_bytes = requests.get(image_url, timeout=10).content
-            client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[
-                    types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                    types.Part.from_text(_VISION_PROMPT),
-                ],
-            )
-            return response.text
-        except Exception as e:
-            return f"Image available on screen. (Description unavailable: {e})"
+    except Exception as e:
+        return f"Image available on screen. (Description unavailable: {e})"
 
 
 def get_segment(segment_index: int, tool_context: ToolContext) -> dict:
-    """Get the narration text, image description, key concepts, expected explanation,
-    and blooms level for a given segment index from the current session state.
+    """Get narration, image description, key concepts, and blooms level for a segment.
 
     Args:
-        segment_index: The 0-based index of the segment to retrieve.
-
-    Returns:
-        A dict with segment data, or an error message if index is out of range.
+        segment_index: 0-based index of the segment to retrieve.
     """
     state = tool_context.state
 

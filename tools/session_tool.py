@@ -67,7 +67,7 @@ def setup_session(
     total_segments = len(narration_texts)
 
     # Run metadata derivation + segment 0 image description in parallel
-    from TutorMe.tools.segment_tool import _describe_image
+    from .segment_tool import _describe_image
     first_image = images[0] if images else ""
 
     fut_meta  = _executor.submit(_derive_segment_metadata, narration_texts)
@@ -179,6 +179,7 @@ def advance_session(
         "xp_earned":             new_xp,
         "coins_earned":          new_coins,
         "xp_delta":              xp_delta,
+        "coins_delta":           coins_delta,
         "total_segments":        total_segments,
         "segments_completed":    next_segment_index,
         "weak_concepts":         merged_weak,
@@ -246,6 +247,8 @@ def save_session_result(
         "overall_mastery":   overall_mastery,
         "xp_earned":         total_xp,
         "coins_earned":      total_coins,
+        "xp_delta":          final_xp,
+        "coins_delta":       final_coins,
         "weak_concepts":     state.get("weak_concepts", []),
         "segments_completed": len(segment_results),
         "summary": (
